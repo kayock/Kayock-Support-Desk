@@ -1,0 +1,716 @@
+{% extends "base.html" %}
+{% block content %}
+<a class="back-link" href="/">&larr; All devices</a>
+
+<div class="device-header">
+  <div>
+    <h1 id="deviceName">{{ device.name }}</h1>
+    <div class="meta-line" id="deviceMeta">
+      {{ device.manufacturer }}{% if device.manufacturer and device.model_number %} · {% endif %}{{ device.model_number }}
+      {% if device.device_type %} · {{ device.device_type }}{% endif %}
+    </div>
+    {% if is_vehicle and vehicle_profile %}
+    <div class="vehicle-profile-line">{{ vehicle_profile }}</div>
+    {% endif %}
+    {% if device.notes %}<div class="notes" id="deviceNotes">{{ device.notes }}</div>{% endif %}
+  </div>
+  <div class="header-actions">
+    <button class="btn secondary" id="editBtn">Edit</button>
+    <button class="btn danger" id="removeBtn">Remove</button>
+  </div>
+</div>
+
+{% if is_vehicle %}
+<div class="section">
+  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+    <h2 style="margin:0;">Answer detail</h2>
+    <div class="answer-level-toggle" id="answerLevelToggle">
+      <button type="button" class="level-btn {{ 'active' if device.answer_level != 'beginner' else '' }}" data-level="experienced">Experienced</button>
+      <button type="button" class="level-btn {{ 'active' if device.answer_level == 'beginner' else '' }}" data-level="beginner">Beginner</button>
+    </div>
+  </div>
+  <p class="hint" style="margin-top:6px;">Beginner explains things in plain language with the easiest checks first. Experienced keeps full factory detail — connector pins, torque values, service limits.</p>
+</div>
+
+<div class="section">
+  <h2>OBD-II Code</h2>
+  <p class="hint" style="margin-top:0;">Enter one or more trouble codes (e.g. <code>P0302</code> or <code>P0300, P0302, P0420</code>). Manual entry only — no scanner connection needed.</p>
+  <div class="ask-box">
+    <input type="text" id="obdInput" placeholder="e.g. P0302">
+    <button class="btn" id="diagnoseBtn">Diagnose Codes</button>
+  </div>
+  <div id="obdResults"></div>
+</div>
+
+<div class="section">
+  <h2>Quick questions</h2>
+  <div class="quick-question-row">
+    <button type="button" class="btn secondary quick-q" data-template="What is the trouble code and what does it mean?">Trouble Code</button>
+    <button type="button" class="btn secondary quick-q" data-template="What component is not working, and what fuse or relay should I check first?">Fuse / Relay</button>
+    <button type="button" class="btn secondary quick-q" data-template="What torque specification are you looking for?">Torque Spec</button>
+    <button type="button" class="btn secondary quick-q" data-template="What fluid type and capacity are you looking for?">Fluid / Capacity</button>
+    <button type="button" class="btn secondary quick-q" data-template="What maintenance item or interval are you asking about?">Maintenance</button>
+    <button type="button" class="btn secondary quick-q" data-template="What part are you trying to remove or install?">Removal Procedure</button>
+    <button type="button" class="btn secondary quick-q" data-template="What electrical component or circuit are you trying to test?">Electrical Test</button>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Online Vehicle Information</h2>
+  {% if not online_sources.enabled %}
+  <p class="hint">Online automotive lookups are turned off. <a href="/settings">Turn them on in Settings</a> to decode VINs or check recalls — everything else on this page keeps working offline.</p>
+  {% else %}
+  <div class="card">
+    <div class="online-card">
+      <h3>Decode VIN</h3>
+      {% if not device.vin %}
+      <p class="hint" style="margin:0;">Add a VIN under Edit to decode it (optional — not required for any other feature).</p>
+      {% elif not online_sources.vin_lookup_enabled %}
+      <p class="hint" style="margin:0;">VIN decode is turned off in Settings.</p>
+      {% else %}
+      <button class="btn secondary" id="decodeVinBtn">Decode VIN</button>
+      <span class="hint" id="decodeVinStatus"></span>
+      <div id="decodeVinResult"></div>
+      {% endif %}
+    </div>
+    <div class="online-card">
+      <h3>Recalls</h3>
+      {% if not (device.vehicle_year and device.vehicle_make and device.vehicle_model) %}
+      <p class="hint" style="margin:0;">Add year, make, and model under Edit to check recalls.</p>
+      {% elif not online_sources.recalls_enabled %}
+      <p class="hint" style="margin:0;">Recall lookup is turned off in Settings.</p>
+      {% else %}
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <button class="btn secondary" id="checkRecallsBtn">Check Recalls</button>
+        <span class="hint" id="recallsLastChecked">
+          {% if recalls_last_checked %}Last checked: <span id="recallsLastCheckedValue">{{ recalls_last_checked }}</span>{% endif %}
+        </span>
+      </div>
+      <div id="recallsResult"></div>
+      {% endif %}
+    </div>
+    <p class="hint" style="margin-top:12px; margin-bottom:0;">
+      Online lookups send only what's needed for that lookup (a VIN, or year/make/model) — never your
+      manuals, questions, or retrieved excerpts.
+    </p>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="section">
+  <h2>Ask a question</h2>
+  <div class="ask-box">
+    <input type="text" id="questionInput" placeholder="{{ 'e.g. The blower motor isn\'t working. What does the service manual say to check?' if is_vehicle else 'e.g. What does error E24 mean?' }}">
+    <button class="btn" id="askBtn">Ask</button>
+  </div>
+  <div id="answerArea"></div>
+</div>
+
+<div class="section">
+  <h2>Chat sessions</h2>
+  <p class="hint" style="margin-top:0;">Conversations are saved per device. Follow-ups keep their meaning ("what about the fill plug?"), and every answer still verifies against fresh manual excerpts — earlier answers are context, never evidence.</p>
+  <div class="chat-layout">
+    <div>
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <button class="btn secondary" id="newChatBtn" style="flex:1;">+ New session</button>
+        <button class="btn secondary" id="refreshChatBtn" title="Refresh session list">&#8635;</button>
+      </div>
+      <div class="session-list" id="chatSessionList"></div>
+    </div>
+    <div class="chat-panel card">
+      <div class="chat-history" id="chatHistory"><span class="hint">Pick a session on the left, or start a new one.</span></div>
+      <div class="ask-box" style="margin-top:10px;">
+        <input type="text" id="chatInput" placeholder="Ask a follow-up…">
+        <button class="btn" id="chatSendBtn">Send</button>
+      </div>
+      <div class="hint" id="chatActiveHint" style="margin-top:6px;">No session selected.</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Search manuals</h2>
+  <p class="hint" style="margin-top:0;">Exact keyword search across every indexed manual — fastest way to find a trouble code, fuse number, or spec without invoking the AI.</p>
+  <div class="ask-box">
+    <input type="text" id="deviceSearchInput" placeholder="e.g. P0302, FUSE 15, drain plug torque…">
+    <button class="btn secondary" id="deviceSearchBtn">Search</button>
+  </div>
+  <div class="card" id="deviceSearchResults" style="margin-top:12px; display:none;"></div>
+</div>
+
+<div class="section">
+  <h2>Specifications</h2>
+  <p class="hint" style="margin-top:0;">Structured values extracted from your manuals — torque, fluids, capacities, fuses, service intervals. <strong>Verified</strong> rows cleared the component+property checks; <strong>candidate</strong> rows are pattern matches only. Always check the source page before relying on a value.</p>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+    <input type="text" id="specsFilter" placeholder="Filter (component, value, category…)" style="flex:1; min-width:180px;">
+    <button class="btn secondary" id="specsRefreshBtn">Refresh</button>
+    <button class="btn secondary" id="specsExtractBtn" title="Re-run extraction over every ready manual (additive)">Re-extract</button>
+  </div>
+  <div class="card spec-table-wrap" id="specsPanel"><span class="hint">Loading…</span></div>
+</div>
+
+<div class="section">
+  <h2>Diagnostic log</h2>
+  <p class="hint" style="margin-top:0;">A structured record of a diagnosis: the symptom, what you tested, what you measured, and what you ruled out. Plain structured notes — saved locally, independent of the AI.</p>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+    <input type="text" id="diagNewTitle" placeholder="e.g. P0302 misfire under load" style="flex:1; min-width:180px;">
+    <input type="text" id="diagNewSymptoms" placeholder="Symptoms (e.g. rough idle, flashing light)" style="flex:1; min-width:180px;">
+    <button class="btn secondary" id="diagNewBtn">+ Start log</button>
+  </div>
+  <div id="diagSessions"></div>
+</div>
+
+<div class="section">
+  <h2>Manuals</h2>
+  <div class="doc-list" id="docList">
+    {% for doc in device.documents %}
+    <div class="doc-row" data-doc-id="{{ doc.id }}">
+      <div>
+        <div class="fname">{{ doc.original_filename }}</div>
+        <div class="dmeta">
+          {% if doc.status == 'ready' %}{{ doc.page_count }} pages · {{ doc.chunk_count }} chunks{% endif %}
+          {% if doc.status == 'error' %}{{ doc.error }}{% endif %}
+          {% if doc.status == 'needs_reindex' %}The AI model settings changed since this was indexed.{% endif %}
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span class="status-pill status-{{ doc.status }}" data-status>{{ "needs reindex" if doc.status == "needs_reindex" else doc.status }}</span>
+        <button class="icon-btn" data-remove-doc="{{ doc.id }}">Remove</button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if not device.documents %}
+  <p class="hint" id="noDocsHint">No manuals uploaded yet.</p>
+  {% endif %}
+  {% if is_vehicle %}
+  <p class="hint">A vehicle can have several manuals — Owner's Manual, Factory Service Manual, Electrical Troubleshooting Manual, Maintenance Schedule, TSBs. Kayock cites which one each answer came from.</p>
+  {% endif %}
+
+  {% set stale_count = device.documents | selectattr("status", "equalto", "needs_reindex") | list | length %}
+  {% set error_count = device.documents | selectattr("status", "equalto", "error") | list | length %}
+  {% set retry_count = stale_count + error_count %}
+  {% if retry_count > 0 %}
+  <div class="card" id="reindexBanner" style="margin-top: 14px; display:flex; align-items:center; justify-content:space-between; gap: 12px;">
+    <div>
+      <strong>{{ retry_count }} manual{{ "s" if retry_count != 1 else "" }} need{{ "" if retry_count != 1 else "s" }} attention.</strong>
+      <div class="hint" style="margin-top:2px;">{% if stale_count %}The embedding model or server changed since {{ "these were" if stale_count != 1 else "this was" }} last indexed. {% endif %}{% if error_count %}{{ error_count }} manual{{ "s" if error_count != 1 else "" }} couldn't be indexed{{ " (a missing model server counts -- once the AI is running you can retry without re-uploading)" if "" else "" }}. {% endif %}Rebuild from the saved file(s) — no re-upload needed.</div>
+    </div>
+    <button class="btn" id="reindexBtn">Reindex Manuals</button>
+  </div>
+  {% endif %}
+
+  <div class="dropzone" id="dropzone" style="margin-top: 14px;">
+    <div class="big">Drag another manual here, or click to browse</div>
+    <input type="file" id="fileInput" multiple accept=".pdf,.txt,.md" style="display:none">
+  </div>
+</div>
+
+<div class="modal-backdrop" id="editModal">
+  <div class="modal">
+    <h3>Edit device</h3>
+    <label class="first">Friendly name</label>
+    <input type="text" id="editName" value="{{ device.name }}">
+    <div class="row">
+      <div><label>Manufacturer</label><input type="text" id="editManufacturer" value="{{ device.manufacturer }}"></div>
+      <div><label>Model number</label><input type="text" id="editModel" value="{{ device.model_number }}"></div>
+    </div>
+    <label>Device type</label>
+    <input type="text" id="editType" value="{{ device.device_type }}">
+
+    <details {% if is_vehicle %}open{% endif %} style="margin-top: 14px;">
+      <summary>Vehicle details (optional — for Car/Truck/Vehicle devices)</summary>
+      <div class="row">
+        <div><label>Year</label><input type="text" id="editVehicleYear" value="{{ device.vehicle_year }}"></div>
+        <div><label>Make</label><input type="text" id="editVehicleMake" value="{{ device.vehicle_make }}"></div>
+        <div><label>Model</label><input type="text" id="editVehicleModel" value="{{ device.vehicle_model }}"></div>
+      </div>
+      <div class="row">
+        <div><label>Trim</label><input type="text" id="editVehicleTrim" value="{{ device.vehicle_trim }}"></div>
+        <div><label>Engine</label><input type="text" id="editVehicleEngine" value="{{ device.vehicle_engine }}"></div>
+        <div><label>Drivetrain</label><input type="text" id="editVehicleDrivetrain" value="{{ device.vehicle_drivetrain }}"></div>
+      </div>
+      <label>VIN <span class="hint">(optional — enables Decode VIN)</span></label>
+      <input type="text" id="editVin" value="{{ device.vin }}" placeholder="17-character VIN" maxlength="17" style="text-transform: uppercase;">
+    </details>
+
+    <label>Notes</label>
+    <textarea id="editNotes">{{ device.notes }}</textarea>
+    <div class="modal-actions">
+      <button class="btn secondary" id="editCancel">Cancel</button>
+      <button class="btn" id="editSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="removeModal">
+  <div class="modal">
+    <h3>Remove this device?</h3>
+    <p class="hint">This deletes its manuals and indexed data. This can't be undone.</p>
+    <div class="modal-actions">
+      <button class="btn secondary" id="removeCancel">Cancel</button>
+      <button class="btn danger" id="removeConfirm">Remove device</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const deviceId = {{ device.id }};
+
+// --- Ask a question -------------------------------------------------
+document.getElementById("askBtn").addEventListener("click", askQuestion);
+document.getElementById("questionInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") askQuestion();
+});
+
+document.querySelectorAll(".quick-q").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const input = document.getElementById("questionInput");
+    input.value = btn.getAttribute("data-template");
+    input.focus();
+  });
+});
+
+async function askQuestion() {
+  const input = document.getElementById("questionInput");
+  const question = input.value.trim();
+  if (!question) return;
+  const area = document.getElementById("answerArea");
+  const btn = document.getElementById("askBtn");
+  btn.disabled = true;
+  area.innerHTML = `<div class="card answer-card"><span class="spinner"></span> Searching the manuals&hellip;</div>`;
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const data = await res.json();
+    renderAnswer(area, data);
+  } catch (e) {
+    area.innerHTML = `<div class="card answer-card answer-error">Something went wrong asking that question. Please try again.</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function viewerLink(s, className) {
+  // Click-to-page citation link into the local PDF viewer. `q` is a short
+  // snippet from the excerpt so the viewer can attempt a text highlight
+  // (best-effort only -- a highlight shows where text sits on the page,
+  // never that it proves the answer's value).
+  if (!s.document_id) return "";
+  const q = encodeURIComponent(s.excerpt.slice(0, 70).trim());
+  const pagePart = s.page ? "&page=" + s.page : "";
+  return `<a class="${className || "src-page-link"}" href="/documents/${s.document_id}/view?${pagePart}${q ? "&q=" + q : ""}" target="_blank" rel="noopener">${s.page ? "Open page " + s.page + " \u2197" : "Open manual \u2197"}</a>`;
+}
+
+function renderAnswer(area, data) {
+  const cls = data.error ? "answer-error" : "";
+  let html = `<div class="card answer-card"><div class="answer-text ${cls}">${escapeHtml(data.answer)}</div>`;
+  if (data.sources && data.sources.length) {
+    html += `<div class="sources">`;
+    data.sources.forEach((s) => {
+      html += `<div class="source-item">
+        <div class="src-head">${escapeHtml(s.filename)}${s.page ? " · page " + s.page : ""}${s.section ? ` · <span class="src-section">${escapeHtml(s.section)}</span>` : ""} ${viewerLink(s)}</div>
+        <div class="src-excerpt">&ldquo;${escapeHtml(s.excerpt)}${s.excerpt.length >= 400 ? "&hellip;" : ""}&rdquo;</div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  html += `<button class="btn secondary export-answer-btn" data-export-answer='1'>Export answer + citations (.md)</button></div>`;
+  area.innerHTML = html;
+  area.querySelectorAll("[data-export-answer]").forEach((btn) => {
+    btn.addEventListener("click", () => exportAnswerAsMarkdown(data));
+  });
+}
+
+function exportAnswerAsMarkdown(data) {
+  // Client-side export: the answer and its citations as a Markdown file.
+  // What it says about sources is exactly what the on-screen answer said --
+  // no citation is added, upgraded, or verified by exporting.
+  const lines = [];
+  lines.push("# Kayock Support Desk — answer");
+  lines.push("");
+  lines.push(`_Device: ${document.getElementById("deviceName").textContent} · Exported: ${new Date().toLocaleString()}_`);
+  lines.push("");
+  lines.push(data.answer);
+  if (data.sources && data.sources.length) {
+    lines.push("");
+    lines.push("## Sources");
+    data.sources.forEach((s) => {
+      lines.push(`- **${s.filename}**${s.page ? `, page ${s.page}` : ""}${s.section ? ` — ${s.section}` : ""}`);
+      lines.push(`  > ${s.excerpt.replace(/\n/g, " ")}`);
+      if (s.document_id) {
+        lines.push(`  [Open in viewer](/documents/${s.document_id}/view?${s.page ? "page=" + s.page + "&" : ""}q=${encodeURIComponent(s.excerpt.slice(0, 70))})`);
+      }
+    });
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "kayock-answer.md";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// --- OBD-II diagnose ---------------------------------------------------
+const diagnoseBtn = document.getElementById("diagnoseBtn");
+if (diagnoseBtn) {
+  const obdInput = document.getElementById("obdInput");
+  obdInput.addEventListener("keydown", (e) => { if (e.key === "Enter") diagnoseCodes(); });
+  diagnoseBtn.addEventListener("click", diagnoseCodes);
+}
+
+async function diagnoseCodes() {
+  const obdInput = document.getElementById("obdInput");
+  const codes = obdInput.value.trim();
+  if (!codes) { showToast("Enter at least one OBD-II code."); return; }
+  const area = document.getElementById("obdResults");
+  const btn = document.getElementById("diagnoseBtn");
+  btn.disabled = true;
+  area.innerHTML = `<div class="card answer-card"><span class="spinner"></span> Searching the manuals&hellip;</div>`;
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/diagnose`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ codes }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Could not diagnose those codes.");
+    }
+    const data = await res.json();
+    let html = "";
+    (data.results || []).forEach((r) => {
+      html += `<div class="card answer-card"><h3 style="margin-top:0;">${escapeHtml(r.code)}</h3>`;
+
+      const dtc = r.dtc_lookup;
+      if (dtc && dtc.definition) {
+        html += `<div style="margin-bottom:14px;">
+          <span class="source-tag obd">Standard OBD-II meaning</span>
+          <div style="margin-top:6px; font-weight:600;">${escapeHtml(dtc.definition)}</div>
+          <div class="hint">${escapeHtml(dtc.category || "")} code · ${escapeHtml(dtc.source)} — not manufacturer-specific</div>
+        </div>`;
+      } else if (dtc) {
+        html += `<div class="hint" style="margin-bottom:14px;">No standard definition found for this code in Kayock's offline reference.</div>`;
+      }
+
+      html += `<span class="source-tag manual">From your service manual</span>`;
+      const cls = r.error ? "answer-error" : "";
+      html += `<div class="answer-text ${cls}" style="margin-top:6px;">${escapeHtml(r.answer)}</div>`;
+      if (r.sources && r.sources.length) {
+        html += `<div class="sources">`;
+        r.sources.forEach((s) => {
+          html += `<div class="source-item">
+            <div class="src-head">${escapeHtml(s.filename)}${s.page ? " · page " + s.page : ""}${s.section ? ` · <span class="src-section">${escapeHtml(s.section)}</span>` : ""} ${viewerLink(s)}</div>
+            <div class="src-excerpt">&ldquo;${escapeHtml(s.excerpt)}${s.excerpt.length >= 400 ? "&hellip;" : ""}&rdquo;</div>
+          </div>`;
+        });
+        html += `</div>`;
+      }
+      html += `</div>`;
+    });
+    area.innerHTML = html;
+  } catch (e) {
+    area.innerHTML = `<div class="card answer-card answer-error">${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// --- Decode VIN ---------------------------------------------------------
+const decodeVinBtn = document.getElementById("decodeVinBtn");
+if (decodeVinBtn) {
+  decodeVinBtn.addEventListener("click", () => decodeVin(false));
+}
+
+async function decodeVin(forceRefresh) {
+  const btn = document.getElementById("decodeVinBtn");
+  const statusEl = document.getElementById("decodeVinStatus");
+  const resultEl = document.getElementById("decodeVinResult");
+  btn.disabled = true;
+  statusEl.textContent = "Decoding\u2026";
+  resultEl.innerHTML = "";
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/decode-vin`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force_refresh: !!forceRefresh }),
+    });
+    const data = await res.json();
+    statusEl.textContent = "";
+    if (!data.ok) {
+      resultEl.innerHTML = `<p class="hint answer-error">${escapeHtml(data.error || "Could not decode this VIN.")}</p>`;
+      return;
+    }
+    renderVinDecodeResult(resultEl, data);
+  } catch (e) {
+    statusEl.textContent = "";
+    resultEl.innerHTML = `<p class="hint answer-error">Could not decode this VIN. Please try again.</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+const FIELD_LABELS = {
+  vehicle_year: "Year", vehicle_make: "Make", vehicle_model: "Model",
+  vehicle_trim: "Trim", vehicle_engine: "Engine", vehicle_drivetrain: "Drivetrain",
+};
+
+function renderVinDecodeResult(resultEl, data) {
+  const suggested = data.suggested_fields || {};
+  const conflicts = data.conflicts || [];
+  const conflictFields = new Set(conflicts.map((c) => c.field));
+  let html = `<div style="margin-top:10px;">`;
+  html += `<div class="hint">Source: ${escapeHtml(data.source)}${data.cache_hit ? " (cached)" : ""}</div>`;
+
+  const newFields = Object.keys(suggested).filter((f) => !conflictFields.has(f));
+  if (newFields.length) {
+    html += `<p class="hint" style="margin-top:8px;">Suggested values (nothing has been changed yet):</p>`;
+    newFields.forEach((field) => {
+      html += `<div class="vin-conflict-row">
+        <label><input type="checkbox" class="vin-apply" data-field="${field}" data-value="${escapeHtml(suggested[field])}" checked>
+        ${FIELD_LABELS[field] || field}: <strong>${escapeHtml(suggested[field])}</strong></label>
+      </div>`;
+    });
+  }
+  if (conflicts.length) {
+    html += `<p class="hint answer-error" style="margin-top:8px;">These differ from what's already saved — choose which to keep:</p>`;
+    conflicts.forEach((c) => {
+      html += `<div class="vin-conflict-row">
+        <label><input type="radio" name="vinField_${c.field}" class="vin-apply-radio" data-field="${c.field}" data-value="${escapeHtml(c.current)}" checked> Keep: ${escapeHtml(c.current)}</label>
+        <label><input type="radio" name="vinField_${c.field}" class="vin-apply-radio" data-field="${c.field}" data-value="${escapeHtml(c.suggested)}"> Use: ${escapeHtml(c.suggested)}</label>
+      </div>`;
+    });
+  }
+  if (newFields.length || conflicts.length) {
+    html += `<button class="btn" id="applyVinDecodeBtn" style="margin-top:10px;">Apply selected values</button>`;
+  } else {
+    html += `<p class="hint" style="margin-top:8px;">No new information to apply.</p>`;
+  }
+  html += `</div>`;
+  resultEl.innerHTML = html;
+
+  const applyBtn = document.getElementById("applyVinDecodeBtn");
+  if (applyBtn) {
+    applyBtn.addEventListener("click", async () => {
+      const updates = {};
+      resultEl.querySelectorAll(".vin-apply:checked").forEach((el) => { updates[el.dataset.field] = el.dataset.value; });
+      resultEl.querySelectorAll(".vin-apply-radio:checked").forEach((el) => { updates[el.dataset.field] = el.dataset.value; });
+      applyBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/devices/${deviceId}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: document.getElementById("deviceName").textContent.trim(),
+            manufacturer: {{ device.manufacturer|tojson }},
+            model_number: {{ device.model_number|tojson }},
+            device_type: {{ device.device_type|tojson }},
+            notes: {{ device.notes|tojson }},
+            vehicle_year: {{ device.vehicle_year|tojson }},
+            vehicle_make: {{ device.vehicle_make|tojson }},
+            vehicle_model: {{ device.vehicle_model|tojson }},
+            vehicle_trim: {{ device.vehicle_trim|tojson }},
+            vehicle_engine: {{ device.vehicle_engine|tojson }},
+            vehicle_drivetrain: {{ device.vehicle_drivetrain|tojson }},
+            vin: {{ device.vin|tojson }},
+            ...updates,
+          }),
+        });
+        if (res.ok) { location.reload(); } else { showToast("Could not save the applied values."); }
+      } catch (e) {
+        showToast("Could not save the applied values.");
+      }
+    });
+  }
+}
+
+// --- Check Recalls --------------------------------------------------------
+const checkRecallsBtn = document.getElementById("checkRecallsBtn");
+if (checkRecallsBtn) {
+  checkRecallsBtn.addEventListener("click", () => checkRecalls(false));
+}
+
+async function checkRecalls(forceRefresh) {
+  const btn = document.getElementById("checkRecallsBtn");
+  const resultEl = document.getElementById("recallsResult");
+  btn.disabled = true;
+  resultEl.innerHTML = `<span class="hint"><span class="spinner"></span> Checking NHTSA\u2026</span>`;
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/recalls`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force_refresh: !!forceRefresh }),
+    });
+    const data = await res.json();
+    renderRecalls(resultEl, data);
+    if (data.ok && data.fetched_at) {
+      const lastCheckedEl = document.getElementById("recallsLastChecked");
+      lastCheckedEl.innerHTML = `Last checked: <span id="recallsLastCheckedValue">${escapeHtml(data.fetched_at)}</span> <a href="#" id="recallsRefreshLink">Check Again</a>`;
+      document.getElementById("recallsRefreshLink").addEventListener("click", (e) => { e.preventDefault(); checkRecalls(true); });
+    }
+  } catch (e) {
+    resultEl.innerHTML = `<p class="hint answer-error">Could not check recalls. Please try again.</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderRecalls(resultEl, data) {
+  if (!data.ok) {
+    resultEl.innerHTML = `<p class="hint answer-error">${escapeHtml(data.error || "Could not check recalls.")}</p>`;
+    return;
+  }
+  const recalls = data.recalls || [];
+  let html = `<div style="margin-top:10px;">`;
+  html += `<div class="hint">Source: ${escapeHtml(data.source)}${data.cache_hit ? " (cached)" : ""} — matched by year/make/model, not a VIN-specific check.</div>`;
+  if (!recalls.length) {
+    html += `<p style="margin-top:8px;">No matching recalls were found in the current NHTSA data.</p>`;
+  } else {
+    recalls.forEach((r) => {
+      html += `<div class="recall-item">
+        <div class="recall-title">${escapeHtml(r.campaign_number)} — ${escapeHtml(r.component)}</div>
+        <dl style="margin:0;">
+          <dt>Summary</dt><dd>${escapeHtml(r.summary)}</dd>
+          <dt>Safety consequence</dt><dd>${escapeHtml(r.consequence)}</dd>
+          <dt>Remedy</dt><dd>${escapeHtml(r.remedy)}</dd>
+          ${r.manufacturer ? `<dt>Manufacturer</dt><dd>${escapeHtml(r.manufacturer)}</dd>` : ""}
+        </dl>
+      </div>`;
+    });
+  }
+  html += `</div>`;
+  resultEl.innerHTML = html;
+}
+
+// --- Answer level toggle -------------------------------------------------
+const answerLevelToggle = document.getElementById("answerLevelToggle");
+if (answerLevelToggle) {
+  answerLevelToggle.querySelectorAll(".level-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const level = btn.getAttribute("data-level");
+      answerLevelToggle.querySelectorAll(".level-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      try {
+        await fetch(`/api/devices/${deviceId}/answer-level`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ answer_level: level }),
+        });
+      } catch (e) {
+        showToast("Could not save answer detail preference.");
+      }
+    });
+  });
+}
+
+// --- Upload more manuals ---------------------------------------------
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("fileInput");
+dropzone.addEventListener("click", () => fileInput.click());
+dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("drag"); });
+dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag"));
+dropzone.addEventListener("drop", (e) => { e.preventDefault(); dropzone.classList.remove("drag"); uploadFiles(e.dataTransfer.files); });
+fileInput.addEventListener("change", () => uploadFiles(fileInput.files));
+
+async function uploadFiles(fileList) {
+  if (!fileList.length) return;
+  const fd = new FormData();
+  for (const f of fileList) fd.append("files", f);
+  showToast("Uploading and indexing " + fileList.length + " file(s)...");
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/documents`, { method: "POST", body: fd });
+    if (!res.ok) throw new Error();
+    location.reload();
+  } catch (e) {
+    showToast("Upload failed. Please try again.");
+  }
+}
+
+// --- Remove a document -------------------------------------------------
+document.querySelectorAll("[data-remove-doc]").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const docId = btn.getAttribute("data-remove-doc");
+    if (!confirm("Remove this manual and its indexed content?")) return;
+    await fetch(`/api/documents/${docId}`, { method: "DELETE" });
+    location.reload();
+  });
+});
+
+// --- Reindex stale manuals ---------------------------------------------
+const reindexBtn = document.getElementById("reindexBtn");
+if (reindexBtn) {
+  reindexBtn.addEventListener("click", async () => {
+    reindexBtn.disabled = true;
+    reindexBtn.textContent = "Reindexing...";
+    try {
+      const res = await fetch(`/api/devices/${deviceId}/reindex`, { method: "POST" });
+      if (!res.ok) throw new Error();
+      showToast("Reindexing started — this may take a moment.");
+      setTimeout(() => location.reload(), 1500);
+    } catch (e) {
+      reindexBtn.disabled = false;
+      reindexBtn.textContent = "Reindex Manuals";
+      showToast("Could not start reindexing. Please try again.");
+    }
+  });
+}
+
+// --- Poll pending/indexing/reindexing documents -------------------------
+function pollDocuments() {
+  document.querySelectorAll('[data-status]').forEach(async (el) => {
+    const row = el.closest(".doc-row");
+    const docId = row.getAttribute("data-doc-id");
+    try {
+      const res = await fetch(`/api/documents/${docId}/status`);
+      const data = await res.json();
+      const displayed = el.textContent.trim();
+      const isTransitional = displayed === "pending" || displayed === "indexing";
+      if (isTransitional && (data.status === "ready" || data.status === "error")) {
+        location.reload();
+      }
+    } catch (e) { /* ignore */ }
+  });
+}
+setInterval(pollDocuments, 4000);
+
+// --- Edit device ---------------------------------------------------
+const editModal = document.getElementById("editModal");
+document.getElementById("editBtn").addEventListener("click", () => editModal.classList.add("show"));
+document.getElementById("editCancel").addEventListener("click", () => editModal.classList.remove("show"));
+document.getElementById("editSave").addEventListener("click", async () => {
+  const body = {
+    name: document.getElementById("editName").value.trim(),
+    manufacturer: document.getElementById("editManufacturer").value.trim(),
+    model_number: document.getElementById("editModel").value.trim(),
+    device_type: document.getElementById("editType").value.trim(),
+    notes: document.getElementById("editNotes").value.trim(),
+    vehicle_year: document.getElementById("editVehicleYear").value.trim(),
+    vehicle_make: document.getElementById("editVehicleMake").value.trim(),
+    vehicle_model: document.getElementById("editVehicleModel").value.trim(),
+    vehicle_trim: document.getElementById("editVehicleTrim").value.trim(),
+    vehicle_engine: document.getElementById("editVehicleEngine").value.trim(),
+    vehicle_drivetrain: document.getElementById("editVehicleDrivetrain").value.trim(),
+    vin: document.getElementById("editVin").value.trim(),
+  };
+  if (!body.name) { showToast("Name is required."); return; }
+  const res = await fetch(`/api/devices/${deviceId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (res.ok) { location.reload(); } else { showToast("Could not save changes."); }
+});
+
+// --- Remove device ---------------------------------------------------
+const removeModal = document.getElementById("removeModal");
+document.getElementById("removeBtn").addEventListener("click", () => removeModal.classList.add("show"));
+document.getElementById("removeCancel").addEventListener("click", () => removeModal.classList.remove("show"));
+document.getElementById("removeConfirm").addEventListener("click", async () => {
+  const res = await fetch(`/api/devices/${deviceId}`, { method: "DELETE" });
+  if (res.ok) { window.location.href = "/"; } else { showToast("Could not remove device."); }
+});
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+</script>
+<script src="/static/js/device-extensions.js"></script>
+{% endblock %}

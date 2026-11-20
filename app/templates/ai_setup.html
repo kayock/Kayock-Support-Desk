@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block content %}
+<a class="back-link" href="/">&larr; All devices</a>
+<h1>Set up Kayock AI</h1>
+<p class="subtitle">Point Kayock at your local model files once — it manages everything else from here on.</p>
+
+<div class="card" style="max-width: 640px;">
+  <h2 style="margin-top:0;">Answering model</h2>
+  <p class="hint" style="margin-top:0;">Choose a local GGUF model that Kayock will use to answer questions.</p>
+  <label class="first">Model file</label>
+  <div class="path-picker">
+    <input type="text" id="chatModelPath" placeholder="e.g. C:\Models\Qwen3.5-4B-Q4_K_M.gguf" value="{{ settings.chat_model_path }}">
+    <button type="button" class="btn secondary" data-pick="chat_model" data-target="chatModelPath">Browse&hellip;</button>
+  </div>
+  <div class="path-status hint" id="chatModelStatus">&nbsp;</div>
+
+  <details style="margin-top: 18px;">
+    <summary>llama-server executable {% if settings.llama_server_path %}(currently: <code>{{ settings.llama_server_path }}</code>){% endif %}</summary>
+    <p class="hint">Only needed if Kayock can't find <code>llama-server</code> on your system PATH automatically.</p>
+    <div class="path-picker">
+      <input type="text" id="llamaServerPath" placeholder="e.g. C:\FoxAI\Engine\llama-server.exe" value="{{ settings.llama_server_path }}">
+      <button type="button" class="btn secondary" data-pick="llama_server" data-target="llamaServerPath">Browse&hellip;</button>
+    </div>
+  </details>
+
+  <h2 style="margin-top: 30px;">Manual-search model</h2>
+  <p class="hint" style="margin-top:0;">
+    Kayock uses a small local embedding model (<code>nomic-embed-text</code>) via Ollama to search your
+    uploaded manuals. Kayock will start Ollama and download this model automatically if needed.
+  </p>
+  <details>
+    <summary>Ollama executable {% if settings.ollama_path %}(currently: <code>{{ settings.ollama_path }}</code>){% endif %}</summary>
+    <p class="hint">Only needed if Kayock can't find <code>ollama</code> on your system PATH automatically.</p>
+    <div class="path-picker">
+      <input type="text" id="ollamaPath" placeholder="e.g. C:\Program Files\Ollama\ollama.exe" value="{{ settings.ollama_path }}">
+      <button type="button" class="btn secondary" data-pick="ollama" data-target="ollamaPath">Browse&hellip;</button>
+    </div>
+  </details>
+
+  <div style="margin-top: 26px; display:flex; align-items:center; gap: 12px; flex-wrap: wrap;">
+    <button class="btn" id="saveStartBtn">Save &amp; Start AI</button>
+    <a href="#" id="skipLink" class="hint">Skip for now</a>
+    <a href="/settings" class="hint">Use an external/advanced server instead &rarr;</a>
+  </div>
+  <div id="setupStatus" class="hint" style="margin-top: 10px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const chatPathInput = document.getElementById("chatModelPath");
+const chatStatus = document.getElementById("chatModelStatus");
+
+// Host-side native file picker: Kayock runs on this same machine, so the
+// server can open a real OS file dialog and hand back the actual path --
+// unlike a browser <input type=file>, which never exposes it.
+document.querySelectorAll("[data-pick]").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const kind = btn.getAttribute("data-pick");
+    const targetInput = document.getElementById(btn.getAttribute("data-target"));
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Opening\u2026";
+    try {
+      const res = await fetch("/api/ai/pick-file", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind }),
+      });
+      const data = await res.json();
+      if (!data.available) {
+        showToast(data.error || "File picker not available on this system — paste the path directly.");
+      } else if (data.path) {
+        targetInput.value = data.path;
+        targetInput.dispatchEvent(new Event("input"));
+      }
+      // data.available && !data.path means the user cancelled -- harmless, do nothing.
+    } catch (e) {
+      showToast("Could not open the file picker — paste the path directly.");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
+  });
+});
+
+let checkTimer = null;
+chatPathInput.addEventListener("input", () => {
+  clearTimeout(checkTimer);
+  chatStatus.textContent = "";
+  checkTimer = setTimeout(checkChatPath, 500);
+});
+
+async function checkChatPath() {
+  const path = chatPathInput.value.trim();
+  if (!path) { chatStatus.textContent = ""; return; }
+  try {
+    const res = await fetch("/api/ai/validate-path", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }),
+    });
+    const data = await res.json();
+    if (data.is_file) {
+      const mb = data.size_bytes ? (data.size_bytes / (1024 * 1024)).toFixed(0) + " MB" : "";
+      chatStatus.innerHTML = `<span style="color: var(--accent-dark);">&check; Found${mb ? " — " + mb : ""}</span>`;
+    } else {
+      chatStatus.innerHTML = `<span style="color: var(--warn);">Not found at this path yet</span>`;
+    }
+  } catch (e) { /* ignore */ }
+}
+if (chatPathInput.value.trim()) checkChatPath();
+
+document.getElementById("saveStartBtn").addEventListener("click", async () => {
+  const chat_model_path = chatPathInput.value.trim();
+  if (!chat_model_path) { showToast("Choose an answering model file first."); return; }
+  const btn = document.getElementById("saveStartBtn");
+  btn.disabled = true;
+  document.getElementById("setupStatus").textContent = "Saving...";
+  try {
+    const res = await fetch("/api/ai/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_model_path,
+        llama_server_path: document.getElementById("llamaServerPath").value.trim(),
+        ollama_path: document.getElementById("ollamaPath").value.trim(),
+        start: true,
+      }),
+    });
+    if (!res.ok) throw new Error();
+    window.location.href = "/ai";
+  } catch (e) {
+    btn.disabled = false;
+    document.getElementById("setupStatus").textContent = "";
+    showToast("Could not save AI settings. Please try again.");
+  }
+});
+
+document.getElementById("skipLink").addEventListener("click", async (e) => {
+  e.preventDefault();
+  await fetch("/api/ai/skip-setup", { method: "POST" });
+  window.location.href = "/";
+});
+</script>
+{% endblock %}

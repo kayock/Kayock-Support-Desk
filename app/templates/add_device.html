@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block content %}
+<a class="back-link" href="/">&larr; All devices</a>
+<h1>Add a device</h1>
+<p class="subtitle">Drop in a manual and we'll try to fill in the details for you.</p>
+
+<div class="card">
+  <div class="dropzone" id="dropzone">
+    <div class="big">Drag manuals here, or click to browse</div>
+    <div>PDF, TXT, or MD &mdash; you can add more than one</div>
+    <input type="file" id="fileInput" multiple accept=".pdf,.txt,.md" style="display:none">
+  </div>
+  <div id="fileChips" style="margin-top: 10px;"></div>
+  <div id="detectStatus" class="hint" style="margin-top: 8px;"></div>
+
+  <form id="deviceForm" style="margin-top: 10px;">
+    <label class="first" for="name">Friendly name</label>
+    <input type="text" id="name" placeholder="e.g. Kitchen Dishwasher" required>
+
+    <div class="row">
+      <div>
+        <label for="manufacturer">Manufacturer</label>
+        <input type="text" id="manufacturer" placeholder="e.g. Bosch">
+      </div>
+      <div>
+        <label for="model_number">Model number</label>
+        <input type="text" id="model_number" placeholder="e.g. SHPM88Z75N">
+      </div>
+    </div>
+
+    <label for="device_type">Device type</label>
+    <input type="text" id="device_type" placeholder="e.g. Dishwasher, Car, Truck">
+
+    <details style="margin-top: 14px;">
+      <summary>Vehicle details (optional — for Car/Truck/Vehicle devices)</summary>
+      <p class="hint">Factory manuals often cover several years/engines/trims — filling these in helps
+        Kayock stick to the configuration you actually own.</p>
+      <div class="row">
+        <div><label>Year</label><input type="text" id="vehicle_year" placeholder="e.g. 2017"></div>
+        <div><label>Make</label><input type="text" id="vehicle_make" placeholder="e.g. Hyundai"></div>
+        <div><label>Model</label><input type="text" id="vehicle_model" placeholder="e.g. Tucson"></div>
+      </div>
+      <div class="row">
+        <div><label>Trim</label><input type="text" id="vehicle_trim" placeholder="e.g. SEL"></div>
+        <div><label>Engine</label><input type="text" id="vehicle_engine" placeholder="e.g. 2.0L GDI"></div>
+        <div><label>Drivetrain</label><input type="text" id="vehicle_drivetrain" placeholder="e.g. AWD"></div>
+      </div>
+      <label>VIN <span class="hint">(optional)</span></label>
+      <input type="text" id="vin" placeholder="17-character VIN" maxlength="17">
+    </details>
+
+    <label for="notes">Notes (optional)</label>
+    <textarea id="notes" placeholder="Anything worth remembering — purchase date, quirks, past repairs..."></textarea>
+
+    <div style="margin-top: 20px; display:flex; gap: 10px; align-items:center;">
+      <button type="submit" class="btn" id="submitBtn">Add Device</button>
+      <a href="/" class="btn secondary">Cancel</a>
+      <span id="submitStatus" class="hint"></span>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let selectedFiles = [];
+
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("fileInput");
+const fileChips = document.getElementById("fileChips");
+const detectStatus = document.getElementById("detectStatus");
+
+dropzone.addEventListener("click", () => fileInput.click());
+dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("drag"); });
+dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag"));
+dropzone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropzone.classList.remove("drag");
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener("change", () => handleFiles(fileInput.files));
+
+function handleFiles(fileList) {
+  const wasEmpty = selectedFiles.length === 0;
+  for (const f of fileList) {
+    selectedFiles.push(f);
+  }
+  renderChips();
+  if (wasEmpty && selectedFiles.length > 0) {
+    detectFromFirstFile(selectedFiles[0]);
+  }
+}
+
+function renderChips() {
+  fileChips.innerHTML = "";
+  selectedFiles.forEach((f, i) => {
+    const chip = document.createElement("span");
+    chip.className = "file-chip";
+    chip.innerHTML = `${escapeHtml(f.name)} <span style="cursor:pointer" data-i="${i}">&times;</span>`;
+    chip.querySelector("span[data-i]").addEventListener("click", (e) => {
+      selectedFiles.splice(parseInt(e.target.dataset.i), 1);
+      renderChips();
+    });
+    fileChips.appendChild(chip);
+  });
+}
+
+async function detectFromFirstFile(file) {
+  detectStatus.innerHTML = '<span class="spinner"></span> Reading document to suggest device details&hellip;';
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const res = await fetch("/api/detect", { method: "POST", body: fd });
+    if (!res.ok) throw new Error("detect failed");
+    const info = await res.json();
+    if (info.name) document.getElementById("name").value = info.name;
+    if (info.manufacturer) document.getElementById("manufacturer").value = info.manufacturer;
+    if (info.model_number) document.getElementById("model_number").value = info.model_number;
+    if (info.device_type) document.getElementById("device_type").value = info.device_type;
+    if (info.name || info.manufacturer || info.model_number) {
+      detectStatus.textContent = "Suggested details filled in below — double-check and edit as needed.";
+    } else {
+      detectStatus.textContent = "Couldn't auto-detect details (no local model reachable, or nothing found). Fill in the form below.";
+    }
+  } catch (e) {
+    detectStatus.textContent = "Couldn't auto-detect details. Fill in the form below.";
+  }
+}
+
+document.getElementById("deviceForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = document.getElementById("name").value.trim();
+  if (!name) { showToast("Please enter a device name."); return; }
+
+  const btn = document.getElementById("submitBtn");
+  btn.disabled = true;
+  document.getElementById("submitStatus").textContent = "Saving...";
+
+  const fd = new FormData();
+  fd.append("name", name);
+  fd.append("manufacturer", document.getElementById("manufacturer").value.trim());
+  fd.append("model_number", document.getElementById("model_number").value.trim());
+  fd.append("device_type", document.getElementById("device_type").value.trim());
+  fd.append("notes", document.getElementById("notes").value.trim());
+  ["vehicle_year", "vehicle_make", "vehicle_model", "vehicle_trim", "vehicle_engine", "vehicle_drivetrain", "vin"].forEach((id) => {
+    fd.append(id, document.getElementById(id).value.trim());
+  });
+  selectedFiles.forEach((f) => fd.append("files", f));
+
+  try {
+    const res = await fetch("/api/devices", { method: "POST", body: fd });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to create device");
+    }
+    const data = await res.json();
+    window.location.href = "/devices/" + data.id;
+  } catch (err) {
+    btn.disabled = false;
+    document.getElementById("submitStatus").textContent = "";
+    showToast(err.message);
+  }
+});
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+</script>
+{% endblock %}

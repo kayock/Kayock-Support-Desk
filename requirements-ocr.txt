@@ -1,0 +1,7 @@
+# OPTIONAL OCR extras for scanned/image-only PDFs (Kayock runs fine without these).
+# Install with: .venv/bin/pip install -r requirements-ocr.txt
+# You also need the tesseract binary itself, e.g. Ubuntu:
+#   sudo apt install tesseract-ocr
+# See docs/LINUX_SETUP.md §5 and README §8.5.
+pytesseract>=0.3.10
+pypdfium2>=4.0

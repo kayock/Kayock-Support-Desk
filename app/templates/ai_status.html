@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block content %}
+<a class="back-link" href="/">&larr; All devices</a>
+<h1>AI</h1>
+<p class="subtitle">Kayock manages your local answering and manual-search models.</p>
+
+<div class="card" style="max-width: 640px;">
+  <div id="overallLine" class="overall-line">Checking status&hellip;</div>
+
+  <div class="ai-component" id="chatComponent">
+    <div class="ai-component-head">
+      <span class="dot" id="chatDot"></span>
+      <div>
+        <div class="ai-component-title">Answering Model</div>
+        <div class="hint" id="chatModelName">&nbsp;</div>
+      </div>
+    </div>
+    <div class="hint" id="chatDetail"></div>
+  </div>
+
+  <div class="ai-component" id="embeddingComponent">
+    <div class="ai-component-head">
+      <span class="dot" id="embeddingDot"></span>
+      <div>
+        <div class="ai-component-title">Manual Search</div>
+        <div class="hint" id="embeddingModelName">&nbsp;</div>
+      </div>
+    </div>
+    <div class="hint" id="embeddingDetail"></div>
+  </div>
+
+  <div style="margin-top: 22px; display:flex; gap: 10px; flex-wrap: wrap; align-items:center;">
+    <button class="btn" id="startBtn">Start AI</button>
+    <button class="btn secondary" id="stopBtn">Stop AI</button>
+    <a href="/ai/setup" class="hint">Change model&hellip;</a>
+    <a href="/settings" class="hint">Advanced AI Settings &rarr;</a>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function setDot(el, status) {
+  el.className = "dot dot-" + status;
+}
+
+function render(data) {
+  const overall = document.getElementById("overallLine");
+  const labels = {
+    ready: "🟢 AI Ready",
+    offline: "🔴 AI Offline",
+    starting: "🟡 Starting AI\u2026",
+    attention: "🟡 AI needs attention",
+  };
+  overall.textContent = labels[data.overall] || data.overall;
+
+  renderComponent("chat", data.chat, "Not selected yet");
+  renderComponent("embedding", data.embedding, "nomic-embed-text");
+
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const busy = data.chat.status === "starting" || data.embedding.status === "starting" || data.embedding.status === "pulling";
+  startBtn.disabled = busy || data.overall === "ready";
+  stopBtn.disabled = busy || data.overall === "offline";
+}
+
+function renderComponent(prefix, comp, fallbackName) {
+  setDot(document.getElementById(prefix + "Dot"), comp.status);
+  document.getElementById(prefix + "ModelName").textContent = comp.model_name || fallbackName;
+  const detailEl = document.getElementById(prefix + "Detail");
+  const statusLabels = {
+    running: "Running", starting: "Starting\u2026", pulling: comp.detail || "Downloading\u2026",
+    stopped: "Not running", error: comp.detail || "Error",
+  };
+  detailEl.textContent = statusLabels[comp.status] || comp.status;
+  detailEl.className = "hint" + (comp.status === "error" ? " answer-error" : "");
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/ai/status");
+    const data = await res.json();
+    render(data);
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+let pollTimer = setInterval(refresh, 2000);
+refresh();
+
+document.getElementById("startBtn").addEventListener("click", async () => {
+  document.getElementById("startBtn").disabled = true;
+  await fetch("/api/ai/start", { method: "POST" });
+  refresh();
+});
+
+document.getElementById("stopBtn").addEventListener("click", async () => {
+  document.getElementById("stopBtn").disabled = true;
+  await fetch("/api/ai/stop", { method: "POST" });
+  refresh();
+});
+</script>
+{% endblock %}

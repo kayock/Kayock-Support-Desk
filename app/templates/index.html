@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+{% if setup_needed %}
+<div class="card setup-banner">
+  <div>
+    <strong>Set up Kayock AI</strong>
+    <div class="hint" style="margin-top:2px;">Point Kayock at your local models so it can answer questions from your manuals.</div>
+  </div>
+  <a href="/ai/setup" class="btn">Set up now</a>
+</div>
+{% endif %}
+<h1>What do you need help with?</h1>
+<p class="subtitle">Pick a device, or add a new one and upload its manual.</p>
+
+{% if devices %}
+<div class="grid">
+  {% for d in devices %}
+  <a class="card device-card" href="/devices/{{ d.id }}">
+    <div class="icon">{{ d.name[0]|upper if d.name else "?" }}</div>
+    <div class="name">{{ d.name }}</div>
+    <div class="meta">{{ d.manufacturer }}{% if d.manufacturer and d.model_number %} · {% endif %}{{ d.model_number }}</div>
+    <div class="doc-count">{{ d.document_count }} manual{{ "s" if d.document_count != 1 else "" }}</div>
+  </a>
+  {% endfor %}
+  <a class="add-card" href="/devices/new">
+    <span class="plus">+</span>
+    <span>Add Device</span>
+  </a>
+</div>
+{% else %}
+<div class="add-card" style="max-width: 320px;">
+  <a class="add-card" href="/devices/new" style="border:none; min-height: auto; padding: 10px 0;">
+    <span class="plus">+</span>
+    <span>Add Device</span>
+  </a>
+</div>
+<p class="empty-state">No devices yet. Add your first one to get started —<br>upload a manual and start asking questions.</p>
+{% endif %}
+{% endblock %}

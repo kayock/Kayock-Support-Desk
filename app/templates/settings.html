@@ -1,0 +1,469 @@
+{% extends "base.html" %}
+{% block content %}
+<a class="back-link" href="/">&larr; All devices</a>
+<h1>Settings</h1>
+<p class="subtitle">Configure the local AI model and see how to reach this app from other devices.</p>
+
+<div class="section">
+  <h2>AI mode</h2>
+  <div class="card">
+    <p class="hint" style="margin-top:0;">
+      <strong>Managed Local AI</strong> is the easy path — Kayock starts and configures your local models
+      for you (see the <a href="/ai">AI page</a>). <strong>External / Advanced Server</strong> is for
+      anyone who'd rather run and point at their own OpenAI-compatible server manually.
+    </p>
+    <div class="ai-mode-toggle">
+      <label><input type="radio" name="ai_mode" value="managed" {% if settings.ai_mode != 'external' %}checked{% endif %}> Managed Local AI</label>
+      <label><input type="radio" name="ai_mode" value="external" {% if settings.ai_mode == 'external' %}checked{% endif %}> External / Advanced Server</label>
+    </div>
+    <div class="hint" id="modeStatus"></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Automatically unload answering model after inactivity</h2>
+  <div class="card">
+    <p class="hint" style="margin-top:0;">
+      Frees up RAM when you're not actively using Kayock. Only the answering model (llama-server)
+      is unloaded — manual search stays ready. Asking a question or running OBD diagnosis resets
+      the timer. The next <strong>Start AI</strong> (or the next question) loads it again normally.
+    </p>
+    <select id="ai_idle_unload_minutes">
+      <option value="0" {% if settings.ai_idle_unload_minutes == '0' %}selected{% endif %}>Never</option>
+      <option value="10" {% if settings.ai_idle_unload_minutes == '10' %}selected{% endif %}>10 minutes</option>
+      <option value="30" {% if settings.ai_idle_unload_minutes == '30' %}selected{% endif %}>30 minutes</option>
+      <option value="60" {% if settings.ai_idle_unload_minutes == '60' %}selected{% endif %}>60 minutes</option>
+    </select>
+    <span class="hint" id="idleUnloadStatus" style="margin-left: 10px;"></span>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Advanced AI Settings</h2>
+  <div class="card settings-form">
+    <details {% if settings.ai_mode == 'external' %}open{% endif %}>
+      <summary>Manually specify chat &amp; embedding servers</summary>
+      <p class="hint">
+        Works with Ollama or any OpenAI-compatible server. Only used when AI mode above is set to
+        "External / Advanced Server" — in Managed mode, Kayock overwrites these automatically
+        whenever you Start AI.
+      </p>
+
+      <label class="first">Chat model base URL</label>
+      <input type="url" id="llm_base_url" value="{{ settings.llm_base_url }}">
+
+      <label>Chat model name</label>
+      <input type="text" id="llm_model" value="{{ settings.llm_model }}" placeholder="e.g. llama3.1">
+
+      <label>API key (optional — leave as-is for Ollama)</label>
+      <input type="password" id="llm_api_key" value="{{ settings.llm_api_key }}">
+
+      <label>Embedding model base URL</label>
+      <input type="url" id="embedding_base_url" value="{{ settings.embedding_base_url }}">
+
+      <label>Embedding model name</label>
+      <input type="text" id="embedding_model" value="{{ settings.embedding_model }}" placeholder="e.g. nomic-embed-text">
+
+      <details style="margin-top:16px;">
+        <summary>Managed model launch options (context window, GPU flags)</summary>
+        <p class="hint">
+          Applies when Kayock starts <code>llama-server</code> for you. The context window defaults to
+          {{ settings.llm_context_size }} (the value Kayock has always used) — raise it if your machine has
+          memory to spare; lowering it below 512 is not applied. GPU handling is left to your llama-server
+          build: CPU-only and GPU builds work with identical settings, and you can pass GPU flags (e.g.
+          <code>--n-gpu-layers 99</code>) explicitly below — nothing GPU-specific is ever assumed.
+        </p>
+        <label class="first">Context window (tokens)</label>
+        <input type="text" id="llm_context_size" value="{{ settings.llm_context_size }}">
+        <label>Extra llama-server arguments (optional, shell-style)</label>
+        <input type="text" id="llama_server_extra_args" value="{{ settings.llama_server_extra_args }}" placeholder="e.g. --n-gpu-layers 99 --flash-attn">
+      </details>
+
+      <div style="margin-top:20px;">
+        <button class="btn" id="saveBtn">Save settings</button>
+        <span id="saveStatus" class="hint"></span>
+      </div>
+    </details>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Conversations &amp; context budget</h2>
+  <div class="card">
+    <p class="hint" style="margin-top:0;">
+      How many previous chat messages are included when you ask a follow-up in a saved chat session.
+      Retrieval and verification always run fresh on the current question regardless of this budget —
+      it only controls how far back the conversation's <em>wording</em> context reaches. Raise it for
+      longer memory; the model's context window (above) is the real ceiling.
+    </p>
+    <label class="first" for="chat_history_max_messages">Conversation history (messages)</label>
+    <input type="text" id="chat_history_max_messages" value="{{ settings.chat_history_max_messages }}" style="max-width:120px;">
+    <span class="hint" id="chatHistoryStatus" style="margin-left:10px;"></span>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Interface</h2>
+  <div class="card">
+    <label class="first" for="ui_theme">Theme</label>
+    <select id="ui_theme" style="max-width:240px;">
+      <option value="auto" {% if settings.ui_theme == 'auto' %}selected{% endif %}>Follow system</option>
+      <option value="light" {% if settings.ui_theme == 'light' %}selected{% endif %}>Light</option>
+      <option value="dark" {% if settings.ui_theme == 'dark' %}selected{% endif %}>Dark</option>
+    </select>
+    <span class="hint">The toolbar button (or the <code>t</code> key) overrides this for the current device until you pick "Follow system" again.</span>
+    <label class="toggle-row" style="margin-top:14px;">
+      <input type="checkbox" id="ui_compact" {% if settings.ui_compact == '1' %}checked{% endif %}>
+      <span>Compact technician layout (denser spacing, more on screen)</span>
+    </label>
+    <span class="hint" id="uiThemeStatus" style="margin-left:10px;"></span>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Specification extraction</h2>
+  <div class="card">
+    <p class="hint" style="margin-top:0;">
+      When several manuals contain the same specification (e.g. an owner's manual and a service manual),
+      the filename keywords below decide which manual is preferred first — in order. Every result still
+      shows which document and page it came from.
+    </p>
+    <label class="first" for="spec_document_preference">Document preference (comma-separated keywords)</label>
+    <input type="text" id="spec_document_preference" value="{{ settings.spec_document_preference }}">
+    <span class="hint" id="specPrefStatus" style="margin-left:10px;"></span>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Online Automotive Sources</h2>
+  <div class="card">
+    <p class="hint" style="margin-top:0;">
+      Optional lookups against official, free government/industry sources to supplement (never
+      replace) your uploaded manuals — a VIN decode, safety recalls, and standard OBD-II code
+      definitions. Your manuals, questions, and retrieved excerpts are never sent anywhere.
+      Kayock works fully offline either way.
+    </p>
+    <label class="toggle-row">
+      <input type="checkbox" id="online_sources_enabled" {% if settings.online_sources_enabled == '1' %}checked{% endif %}>
+      <span>Enable online automotive lookups</span>
+    </label>
+    <div id="onlineSubToggles" style="margin-left: 26px; margin-top: 8px;">
+      <label class="toggle-row">
+        <input type="checkbox" id="online_vin_lookup_enabled" {% if settings.online_vin_lookup_enabled == '1' %}checked{% endif %}>
+        <span>NHTSA VIN decode</span>
+      </label>
+      <label class="toggle-row">
+        <input type="checkbox" id="online_recalls_enabled" {% if settings.online_recalls_enabled == '1' %}checked{% endif %}>
+        <span>NHTSA recalls</span>
+      </label>
+      <p class="hint" style="margin-top:8px;">
+        Standard OBD-II code definitions are served from a small built-in offline reference
+        (no suitable free online source exists yet) — they work with or without internet access
+        and aren't affected by this toggle.
+      </p>
+    </div>
+    <div class="hint" id="onlineSourcesStatus" style="margin-top: 10px;"></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Access from other devices on your network</h2>
+  <div class="card">
+    <p class="hint" style="margin-top:0;">Open this on any phone, tablet, or computer on the same Wi-Fi/network:</p>
+    <div class="qr-box">
+      <img src="/api/qrcode.png" width="150" height="150" alt="QR code for LAN URL">
+      <div>
+        <div class="url-box">{{ lan_url }}</div>
+        <p class="hint">Friendly hostname (if your network supports it): <code>{{ hostname_url }}</code></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Backup</h2>
+  <div class="card">
+    <p class="hint" style="margin-top:0;">
+      Download a ZIP of all devices, manuals, settings, and the search index. Keep it somewhere safe,
+      or use it to move this installation to another computer.
+    </p>
+    <a class="btn secondary" href="/api/export">Download backup (.zip)</a>
+  </div>
+</div>
+
+<div class="section">
+  <h2>System diagnostics</h2>
+  <div class="card">
+    <p class="hint" style="margin-top:0;">
+      A read-only snapshot of the local environment — Python, data folder writability, file-picker
+      availability, llama-server / Ollama discovery, and GPU presence (informational only: Kayock never
+      assumes a GPU). Nothing is installed or changed by running this.
+    </p>
+    <button class="btn secondary" id="diagRefreshBtn">Run diagnostics</button>
+    <div class="diag-grid" id="diagPanel" style="margin-top:14px;"></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Background jobs</h2>
+  <div class="card">
+    <p class="hint" style="margin-top:0;">
+      Indexing and reindexing run through a persistent local queue with progress, retries, and
+      cancellation. Jobs interrupted by a crash or restart are re-run automatically — never lost.
+    </p>
+    <button class="btn secondary" id="jobsRefreshBtn">Refresh</button>
+    <div id="jobsPanel" style="margin-top:14px;"></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Usage metrics</h2>
+  <div class="card">
+    <p class="hint" style="margin-top:0;">Local counters about retrieval and verification — kept in this installation's database, never sent anywhere.</p>
+    <div id="metricsPanel"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+document.getElementById("saveBtn").addEventListener("click", async () => {
+  const body = {
+    llm_base_url: document.getElementById("llm_base_url").value.trim(),
+    llm_model: document.getElementById("llm_model").value.trim(),
+    llm_api_key: document.getElementById("llm_api_key").value,
+    embedding_base_url: document.getElementById("embedding_base_url").value.trim(),
+    embedding_model: document.getElementById("embedding_model").value.trim(),
+  };
+  document.getElementById("saveStatus").textContent = "Saving...";
+  const res = await fetch("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  document.getElementById("saveStatus").textContent = res.ok ? "Saved." : "Could not save.";
+  setTimeout(() => { document.getElementById("saveStatus").textContent = ""; }, 2500);
+});
+
+document.querySelectorAll('input[name="ai_mode"]').forEach((radio) => {
+  radio.addEventListener("change", async (e) => {
+    const modeStatus = document.getElementById("modeStatus");
+    modeStatus.textContent = "Saving...";
+    const res = await fetch("/api/ai/mode", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: e.target.value }),
+    });
+    modeStatus.textContent = res.ok ? "Saved." : "Could not save.";
+    setTimeout(() => { modeStatus.textContent = ""; }, 2500);
+  });
+});
+
+const onlineToggleIds = ["online_sources_enabled", "online_vin_lookup_enabled", "online_recalls_enabled"];
+onlineToggleIds.forEach((id) => {
+  document.getElementById(id).addEventListener("change", async () => {
+    const status = document.getElementById("onlineSourcesStatus");
+    status.textContent = "Saving...";
+    const body = {};
+    onlineToggleIds.forEach((tid) => { body[tid] = document.getElementById(tid).checked ? "1" : "0"; });
+    const res = await fetch("/api/settings", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    status.textContent = res.ok ? "Saved." : "Could not save.";
+    setTimeout(() => { status.textContent = ""; }, 2500);
+  });
+});
+
+document.getElementById("ai_idle_unload_minutes").addEventListener("change", async (e) => {
+  const status = document.getElementById("idleUnloadStatus");
+  status.textContent = "Saving...";
+  const res = await fetch("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ai_idle_unload_minutes: e.target.value }),
+  });
+  status.textContent = res.ok ? "Saved." : "Could not save.";
+  setTimeout(() => { status.textContent = ""; }, 2500);
+});
+
+// ---- Extended save: context size, extra args -------------------------
+document.getElementById("saveBtn").addEventListener("click", async (e) => {
+  // The main handler above already sent core fields; add the managed
+  // launch options here (kept separate so the original handler stays).
+  const ctxRaw = document.getElementById("llm_context_size").value.trim();
+  const extra = document.getElementById("llama_server_extra_args").value.trim();
+  const body = {};
+  if (ctxRaw) body.llm_context_size = String(parseInt(ctxRaw, 10) || "");
+  body.llama_server_extra_args = extra;
+  await fetch("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+});
+
+// ---- Conversations budget -------------------------------------------
+document.getElementById("chat_history_max_messages").addEventListener("change", async (e) => {
+  const status = document.getElementById("chatHistoryStatus");
+  status.textContent = "Saving...";
+  const value = parseInt(e.target.value, 10);
+  const res = await fetch("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_history_max_messages: String(isNaN(value) ? 8 : value) }),
+  });
+  status.textContent = res.ok ? "Saved." : "Could not save.";
+  setTimeout(() => { status.textContent = ""; }, 2500);
+});
+
+// ---- Interface --------------------------------------------------------
+document.getElementById("ui_theme").addEventListener("change", async (e) => {
+  const status = document.getElementById("uiThemeStatus");
+  status.textContent = "Saving...";
+  const res = await fetch("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ui_theme: e.target.value }),
+  });
+  if (res.ok) {
+    // Clear the per-device override so the saved preference applies now.
+    try { localStorage.removeItem("kayock-theme"); } catch (err) {}
+    const mode = e.target.value;
+    const dark = mode === "dark" || (mode !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    status.textContent = "Saved.";
+  } else {
+    status.textContent = "Could not save.";
+  }
+  setTimeout(() => { status.textContent = ""; }, 2500);
+});
+document.getElementById("ui_compact").addEventListener("change", async (e) => {
+  const status = document.getElementById("uiThemeStatus");
+  status.textContent = "Saving...";
+  const res = await fetch("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ui_compact: e.target.checked ? "1" : "0" }),
+  });
+  if (res.ok) {
+    document.documentElement.dataset.compact = e.target.checked ? "true" : "false";
+    status.textContent = "Saved.";
+  } else {
+    status.textContent = "Could not save.";
+  }
+  setTimeout(() => { status.textContent = ""; }, 2500);
+});
+
+// ---- Spec document preference ----------------------------------------
+document.getElementById("spec_document_preference").addEventListener("change", async (e) => {
+  const status = document.getElementById("specPrefStatus");
+  status.textContent = "Saving...";
+  const res = await fetch("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ spec_document_preference: e.target.value }),
+  });
+  status.textContent = res.ok ? "Saved." : "Could not save.";
+  setTimeout(() => { status.textContent = ""; }, 2500);
+});
+
+// ---- Diagnostics panel -------------------------------------------------
+async function loadDiagnostics() {
+  const panel = document.getElementById("diagPanel");
+  panel.innerHTML = "<span class='hint'>Collecting…</span>";
+  try {
+    const res = await fetch("/api/diagnostics");
+    const d = await res.json();
+    const rows = [];
+    function row(label, value, okClass) {
+      rows.push(`<div><div class="dt">${label}</div><div class="dd ${okClass || ""}">${value}</div></div>`);
+    }
+    const py = d.python || {};
+    row("Python", `${esc(py.python_version || "?")} ${py.running_in_venv ? "(venv)" : "(no venv)"}`, py.running_in_venv ? "ok-badge" : "bad-badge");
+    const data = d.data || {};
+    row("Data folder", `${esc(data.data_dir || "?")} — ${data.data_dir_writable ? "writable" : "NOT writable"}`, data.data_dir_writable ? "ok-badge" : "bad-badge");
+    if (data.disk_free_gb != null) row("Disk free", `${data.disk_free_gb} GB`);
+    const gui = d.gui || {};
+    row("File picker", gui.native_file_picker_available ? "available" : (gui.tkinter_available ? "tkinter ok, no display" : "tkinter missing (text fallback)"), gui.tkinter_available ? "ok-badge" : "");
+    const ai = d.ai || {};
+    row("llama-server", ai.llama_server_found ? "found" : "not found (set path in AI setup)", ai.llama_server_found ? "ok-badge" : "bad-badge");
+    row("Ollama", ai.ollama_found ? "found" : "not found", ai.ollama_found ? "ok-badge" : "");
+    row("Answering model context", `${ai.chat_context_size || "?"} tokens`);
+    const gpus = (d.gpu && d.gpu.gpus_detected) || [];
+    row("GPU", gpus.length ? gpus.map((g) => esc(g.name || g.type)).join(", ") : "none detected (CPU mode)");
+    (d.logs && d.logs.log_files || []).forEach((f) => {
+      row("Log: " + esc(f.name), `${f.size_bytes} bytes — ${esc(f.path)}`);
+    });
+    row("AI status", `${esc((d.ai && d.ai.status && d.ai.status.overall) || "unknown")}`);
+    panel.innerHTML = rows.join("");
+  } catch (e) {
+    panel.innerHTML = "<span class='hint'>Diagnostics failed to load.</span>";
+  }
+}
+document.getElementById("diagRefreshBtn").addEventListener("click", loadDiagnostics);
+loadDiagnostics();
+
+// ---- Jobs panel --------------------------------------------------------
+async function loadJobs() {
+  const panel = document.getElementById("jobsPanel");
+  try {
+    const res = await fetch("/api/jobs?limit=25");
+    const data = await res.json();
+    const jobs = data.jobs || [];
+    if (!jobs.length) {
+      panel.innerHTML = "<span class='hint'>No background jobs yet — indexing runs here once you upload manuals.</span>";
+      return;
+    }
+    panel.innerHTML = jobs.map((j) => {
+      const pct = j.total > 0 ? Math.min(100, Math.round((j.progress / j.total) * 100)) : (j.status === "done" ? 100 : 0);
+      return `<div class="job-row">
+        <span class="job-id">#${j.id}</span>
+        <span class="job-type">${esc(j.job_type)}</span>
+        <span class="status-pill status-${esc(j.status)}">${esc(j.status)}</span>
+        ${j.status === "running" || j.status === "queued" ? `<div class="job-progress"><div style="width:${pct}%"></div></div>` : ""}
+        <span class="hint">attempt ${j.attempts}/${j.max_attempts}</span>
+        ${j.status === "queued" || j.status === "running" ? `<button class="btn secondary btn-sm" data-cancel-job="${j.id}">Cancel</button>` : ""}
+        ${j.error ? `<span class="job-error">${esc(j.error)}</span>` : ""}
+      </div>`;
+    }).join("");
+  } catch (e) {
+    panel.innerHTML = "<span class='hint'>Could not load jobs.</span>";
+  }
+}
+document.getElementById("jobsRefreshBtn").addEventListener("click", loadJobs);
+document.getElementById("jobsPanel").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-cancel-job]");
+  if (btn) {
+    await fetch(`/api/jobs/${btn.dataset.cancelJob}/cancel`, { method: "POST" });
+    loadJobs();
+  }
+});
+loadJobs();
+
+// ---- Metrics panel -----------------------------------------------------
+async function loadMetrics() {
+  const panel = document.getElementById("metricsPanel");
+  try {
+    const res = await fetch("/api/metrics");
+    const data = await res.json();
+    const m = data.metrics || {};
+    const labels = {
+      questions_answered: "Questions answered",
+      retrieval_embedding_fallbacks: "Answers via keyword-only retrieval (embedding server unreachable)",
+      keyword_hits_returned: "Keyword search hits served",
+      retrieval_latency_ms_sum: "Total retrieval time (ms)",
+    };
+    function fmtNum(v) {
+      if (v == null) return "0";
+      const n = Number(v);
+      return Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+    }
+    const lines = Object.keys(labels).map((k) =>
+      `<div class="metric-line"><span>${labels[k]}</span><strong>${fmtNum(m[k])}</strong></div>`
+    );
+    if (data.avg_retrieval_ms != null) {
+      lines.push(`<div class="metric-line"><span>Average retrieval time</span><strong>${data.avg_retrieval_ms} ms</strong></div>`);
+    }
+    panel.innerHTML = lines.join("") || "<span class='hint'>No usage yet.</span>";
+  } catch (e) {
+    panel.innerHTML = "<span class='hint'>Could not load metrics.</span>";
+  }
+}
+loadMetrics();
+</script>
+{% endblock %}

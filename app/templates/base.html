@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Kayock Support Desk{% endblock %}</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#2b6e63">
+  <link rel="icon" href="/static/icons/icon-192.png" sizes="192x192">
+  <script>
+    // Apply the saved theme BEFORE the stylesheet paints, so there's no
+    // flash of the wrong theme. ui_theme ("auto"/"light"/"dark") comes
+    // from Settings; a manual toggle on this device overrides it via
+    // localStorage until "Follow system" is picked again in Settings.
+    (function () {
+      var server = "{{ settings.ui_theme if settings is defined and settings and settings.get('ui_theme') else 'auto' }}";
+      var saved = localStorage.getItem("kayock-theme");
+      var mode = (saved === "light" || saved === "dark") ? saved : server;
+      var dark = mode === "dark" || (mode !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      var compact = localStorage.getItem("kayock-compact");
+      if (compact === null) compact = "{{ settings.ui_compact if settings is defined and settings and settings.get('ui_compact') else '0' }}";
+      document.documentElement.dataset.compact = compact === "1" ? "true" : "false";
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div class="topbar">
+    <a class="brand" href="/">
+      <span class="mark">K</span>
+      <span class="name">Kayock Support Desk</span>
+    </a>
+    <div id="globalAiWidget" class="global-ai-widget">
+      <span class="dot dot-stopped" id="globalAiDot"></span>
+      <span id="globalAiLabel">AI</span>
+      <button type="button" class="btn secondary global-ai-btn" id="globalAiBtn">Start AI</button>
+    </div>
+    <nav>
+      <a href="/">Devices</a>
+      <a href="/ai">AI</a>
+      <a href="/settings">Settings</a>
+      <button type="button" class="theme-toggle" id="themeToggle" title="Toggle light/dark theme (t)">&#9681;</button>
+    </nav>
+  </div>
+  <div class="container">
+    {% block content %}{% endblock %}
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <div class="modal-backdrop" id="kbdModal">
+    <div class="modal kbd-help">
+      <h3>Keyboard shortcuts</h3>
+      <p><kbd>/</kbd> focus the question / search box on this page</p>
+      <p><kbd>t</kbd> toggle light / dark theme</p>
+      <p><kbd>.</kbd> next page &nbsp; <kbd>,</kbd> previous page (manual viewer)</p>
+      <p><kbd>Esc</kbd> close this dialog</p>
+      <div class="modal-actions"><button class="btn secondary" id="kbdClose">Close</button></div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/global-ai.js"></script>
+  <script src="/static/js/theme.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

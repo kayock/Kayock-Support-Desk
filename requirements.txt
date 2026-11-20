@@ -1,0 +1,12 @@
+fastapi>=0.141,<1.0
+uvicorn>=0.52,<1.0
+starlette>=1.6,<2.0
+jinja2>=3.1,<4.0
+python-multipart>=0.0.20
+pypdf[crypto]>=5.9
+chromadb>=1.5,<2.0
+langchain-text-splitters>=1.1
+openai>=3.0,<4.0
+qrcode>=8.0
+pillow>=11.0
+python-dotenv>=1.0

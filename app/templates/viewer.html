@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}Manual viewer{% endblock %}
+{% block content %}
+<div class="viewer-bar">
+  <a class="btn btn-sm" href="/devices/{{ document_id }}">&#8592; Back to device</a>
+  <span class="viewer-title" id="viewerTitle">Loading…</span>
+  <span class="viewer-controls">
+    <button id="prevPage" class="btn btn-sm" title="Previous page (, or PageUp)">&#9664; Prev</button>
+    <span class="viewer-page-indicator">Page <input id="pageInput" type="number" min="1" value="1" /> / <span id="pageCount">?</span></span>
+    <button id="nextPage" class="btn btn-sm" title="Next page (. or PageDown)">Next &#9654;</button>
+  </span>
+</div>
+<div class="viewer-note" id="viewerNote">
+  {% if q %}Searching for <strong id="queryEcho"></strong> on this page — highlights are best-effort: they show
+  <em>where matching text sits on the page</em>, not that it proves the answer's value.{% endif %}
+</div>
+<div id="viewerContainer" class="viewer-container"></div>
+
+<script src="/static/vendor/pdfjs/pdf.min.js"></script>
+<script>
+(function () {
+  "use strict";
+  const DOC_ID = {{ document_id }};
+  const params = new URLSearchParams(location.search);
+  const QUERY = (params.get("q") || "").trim();
+  const START_PAGE = Math.max(1, parseInt(params.get("page") || "1", 10) || 1);
+  const container = document.getElementById("viewerContainer");
+  const pageInput = document.getElementById("pageInput");
+  const pageCountEl = document.getElementById("pageCount");
+  const titleEl = document.getElementById("viewerTitle");
+  const noteEl = document.getElementById("viewerNote");
+  if (QUERY) {
+    const echo = document.getElementById("queryEcho");
+    if (echo) echo.textContent = QUERY;
+  }
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "/static/vendor/pdfjs/pdf.worker.min.js";
+
+  const renderedPages = new Set();
+  let pdfDoc = null;
+
+  function highlightOverlay(canvas, page, query, scale) {
+    // Best-effort text highlighting: draw a translucent box behind every
+    // text item that contains the query. Approximate metrics (based on
+    // the item transform + font size); good enough to find the spot on
+    // the page, never a guarantee of exhaustive matching.
+    return page.getTextContent().then((tc) => {
+      const ctx = canvas.getContext("2d");
+      const lowerQ = query.toLowerCase();
+      tc.items.forEach((item) => {
+        const s = (item.str || "").toLowerCase();
+        if (!s || !s.includes(lowerQ)) return;
+        const tx = pdfjsLib.Util.transform(page.getViewport({ scale: scale }).transform, item.transform);
+        const fontSize = Math.hypot(tx[2], tx[3]);
+        const x = tx[4];
+        const y = tx[5] - fontSize;
+        const w = (item.width || fontSize * s.length * 0.5) * scale;
+        ctx.save();
+        ctx.fillStyle = "rgba(255, 210, 0, 0.35)";
+        ctx.fillRect(x, y, Math.max(w, fontSize), fontSize * 1.15);
+        ctx.restore();
+      });
+    });
+  }
+
+  function renderPage(num) {
+    if (renderedPages.has(num) || !pdfDoc) return;
+    renderedPages.add(num);
+    pdfDoc.getPage(num).then((page) => {
+      const scale = window.innerWidth < 700 ? 1.1 : 1.5;
+      const viewport = page.getViewport({ scale: scale });
+      const wrap = document.createElement("div");
+      wrap.className = "viewer-page";
+      wrap.dataset.pageNum = num;
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      canvas.maxWidth = "100%";
+      const label = document.createElement("div");
+      label.className = "viewer-page-label";
+      label.textContent = "Page " + num;
+      wrap.appendChild(label);
+      wrap.appendChild(canvas);
+      container.appendChild(wrap);
+      page.render({ canvasContext: canvas.getContext("2d"), viewport: viewport }).promise.then(() => {
+        if (QUERY) highlightOverlay(canvas, page, QUERY, scale);
+        if (num === currentPage()) wrap.scrollIntoView();
+      });
+    });
+  }
+
+  function currentPage() {
+    return parseInt(pageInput.value || "1", 10) || 1;
+  }
+
+  function goToPage(num) {
+    num = Math.min(Math.max(1, num), pdfDoc ? pdfDoc.numPages : 1);
+    pageInput.value = num;
+    const existing = container.querySelector('[data-page-num="' + num + '"]');
+    if (existing) {
+      existing.scrollIntoView({ behavior: "smooth" });
+    } else {
+      // Render all pages up to this one so scrolling context exists.
+      for (let i = 1; i <= num; i++) renderPage(i);
+      setTimeout(() => {
+        const el = container.querySelector('[data-page-num="' + num + '"]');
+        if (el) el.scrollIntoView({ behavior: "smooth" });
+      }, 300);
+    }
+  }
+
+  fetch("/api/documents/" + DOC_ID + "/file")
+    .then((res) => {
+      if (!res.ok) throw new Error("manual file unavailable (" + res.status + ")");
+      return res.blob();
+    })
+    .then((blob) => {
+      if (blob.type && blob.type.indexOf("pdf") === -1) {
+        // Non-PDF manual (.txt/.md): render the raw text with the query marked.
+        titleEl.textContent = "Manual (text)";
+        pageCountEl.textContent = "1";
+        blob.text().then((text) => {
+          const pre = document.createElement("pre");
+          pre.className = "viewer-text";
+          let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+          if (QUERY) {
+            const re = new RegExp(QUERY.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+            html = html.replace(re, (m) => "<mark>" + m + "</mark>");
+          }
+          pre.innerHTML = html;
+          container.appendChild(pre);
+          noteEl.textContent = "Plain-text manual — page numbers do not apply.";
+        });
+        return;
+      }
+      return blob.arrayBuffer().then((buf) =>
+        pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise
+      ).then((doc) => {
+        pdfDoc = doc;
+        pageCountEl.textContent = doc.numPages;
+        pageInput.max = doc.numPages;
+        titleEl.textContent = "Manual (" + doc.numPages + " pages)";
+        pageInput.value = START_PAGE;
+        // Render the first few pages immediately; the rest lazily on scroll.
+        const initial = Math.min(START_PAGE + 2, doc.numPages);
+        for (let i = 1; i <= initial; i++) renderPage(i);
+        goToPage(START_PAGE);
+
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach((e) => {
+            if (e.isIntersecting) {
+              const n = parseInt(e.target.dataset.pageNum, 10);
+              if (n) {
+                pageInput.value = n;
+                for (let i = n; i <= Math.min(doc.numPages, n + 3); i++) renderPage(i);
+              }
+            }
+          });
+        }, { root: null, rootMargin: "400px" });
+        const watchNew = new MutationObserver(() => {
+          container.querySelectorAll(".viewer-page").forEach((el) => observer.observe(el));
+        });
+        watchNew.observe(container, { childList: true });
+      });
+    })
+    .catch((err) => {
+      container.innerHTML = '<div class="viewer-error">Could not load this manual: ' + err.message +
+        ". If it was uploaded before a software update, try uploading it again.</div>";
+    });
+
+  document.getElementById("prevPage").addEventListener("click", () => goToPage(currentPage() - 1));
+  document.getElementById("nextPage").addEventListener("click", () => goToPage(currentPage() + 1));
+  pageInput.addEventListener("change", () => goToPage(currentPage()));
+  document.addEventListener("keydown", (ev) => {
+    if (ev.target === pageInput) return;
+    if (ev.key === "PageDown" || ev.key === ".") { ev.preventDefault(); goToPage(currentPage() + 1); }
+    if (ev.key === "PageUp" || ev.key === ",") { ev.preventDefault(); goToPage(currentPage() - 1); }
+  });
+})();
+</script>
+{% endblock %}

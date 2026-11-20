@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# User data: manuals, databases, vector index, logs, backups.
+# Everything a running installation produces lives under data/ and is
+# never part of the source tree.
+data/
+
+# Model files (never commit weights — they stay user-supplied)
+*.gguf
+*.bin
+*.safetensors
+
+# Credentials / local configuration
+.env
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
